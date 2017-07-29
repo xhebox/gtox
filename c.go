@@ -1,7 +1,7 @@
 package gtox
 
 /*
-#cgo CFLAGS: -g -O2 -std=c99 -Wall -Wno-unused-function
-#cgo LDFLAGS: -ltoxcore
+#cgo CFLAGS: -O2 -std=c11 -Wall -Wno-unused-function
+#cgo LDFLAGS: -ltoxcore -ltoxencryptsave
 */
 import "C"
