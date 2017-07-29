@@ -8,16 +8,22 @@ import (
 	"errors"
 )
 
-type Pass_key struct {
-	key *C.Tox_Pass_Key
-}
-
+// ======== type and enum ==========
 const (
 	PASS_SALT_LENGTH = C.TOX_PASS_SALT_LENGTH
 	PASS_KEY_LENGTH = C.TOX_PASS_KEY_LENGTH
 	PASS_ENCRYPTION_EXTRA_LENGTH = C.TOX_PASS_ENCRYPTION_EXTRA_LENGTH
 )
 
+// main struct
+type Pass_key struct {
+	// private
+	key *C.Tox_Pass_Key
+}
+// ================================
+
+// =========== methods ============
+// begin part 1
 func Pass_encrypt(plain []byte, pass []byte) ([]byte, error) {
 	var err C.TOX_ERR_ENCRYPTION = C.TOX_ERR_ENCRYPTION_OK
 	var cipher = make([]byte, PASS_ENCRYPTION_EXTRA_LENGTH+len(plain))
@@ -76,6 +82,7 @@ func Pass_decrypt(cipher []byte, pass []byte) ([]byte, error) {
 	}
 }
 
+// begin part 2
 func (this *Pass_key) New() error {
 	this.key = C.tox_pass_key_new();
 	if this.key == nil {
@@ -87,7 +94,6 @@ func (this *Pass_key) New() error {
 func (this *Pass_key) Del() {
 	C.tox_pass_key_free(this.key)
 }
-
 
 func (this *Pass_key) Pass_key_derive(pass []byte) (bool, error) {
 	var err C.TOX_ERR_KEY_DERIVATION = C.TOX_ERR_KEY_DERIVATION_OK
@@ -212,3 +218,4 @@ func Salt(cipher []byte) ([PASS_SALT_LENGTH]byte, error) {
 func Is_data_encrypted(data []byte) bool {
 	return bool(C.tox_is_data_encrypted((*C.uint8_t)(&data[0])))
 }
+// ================================
