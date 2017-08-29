@@ -1390,7 +1390,7 @@ func (this *Tox) Conference_join(fid uint32, cookie []byte) (uint32, error) {
 	case C.TOX_ERR_CONFERENCE_JOIN_INVALID_LENGTH:
 		return uint32(r), errors.New("cookie passed has an invalid length.")
 	case C.TOX_ERR_CONFERENCE_JOIN_WRONG_TYPE:
-		return uint32(r), errors.New("invalid cookie.")
+		return uint32(r), errors.New("wrong group type or invalid cookie.")
 	case C.TOX_ERR_CONFERENCE_JOIN_FRIEND_NOT_FOUND:
 		return uint32(r), errors.New("friend not found, invalid friend number.")
 	case C.TOX_ERR_CONFERENCE_JOIN_DUPLICATE:
