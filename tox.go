@@ -574,7 +574,7 @@ func (this *Tox) Self_set_status_message(message string) (bool, error) {
 	var err C.TOX_ERR_SET_INFO = C.TOX_ERR_SET_INFO_OK
 	var msg =  []byte(message)
 
-	r := C.tox_self_set_name(this.tox,
+	r := C.tox_self_set_status_message(this.tox,
 		(*C.uint8_t)(&msg[0]),
 		C.size_t(len(msg)),
 		&err)
