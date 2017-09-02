@@ -432,7 +432,9 @@ func (this *Tox) Savedata_size() uint32 {
 func (this *Tox) Savedata() []byte {
 	var size = this.Savedata_size()
 	var data = make([]byte, size)
-	C.tox_get_savedata(this.tox, (*C.uint8_t)(&data[0]))
+	if size != 0 {
+		C.tox_get_savedata(this.tox, (*C.uint8_t)(&data[0]))
+	}
 	return data
 }
 
@@ -566,7 +568,9 @@ func (this *Tox) Self_name_size() uint32 {
 func (this *Tox) Self_name() string {
 	var size = this.Self_name_size()
 	var name = make([]byte, size)
-	C.tox_self_get_name(this.tox, (*C.uint8_t)(&name[0]))
+	if size != 0 {
+		C.tox_self_get_name(this.tox, (*C.uint8_t)(&name[0]))
+	}
 	return string(name)
 }
 
@@ -598,7 +602,9 @@ func (this *Tox) Self_status_message_size() uint32 {
 func (this *Tox) Self_status_message() string {
 	var size = this.Self_status_message_size()
 	var status_message = make([]byte, size)
-	C.tox_self_get_status_message(this.tox, (*C.uint8_t)(&status_message[0]))
+	if size != 0 {
+		C.tox_self_get_status_message(this.tox, (*C.uint8_t)(&status_message[0]))
+	}
 	return string(status_message)
 }
 
@@ -728,7 +734,9 @@ func (this *Tox) Friend_list_size() uint32 {
 func (this *Tox) Friend_list() []uint32 {
 	var size = this.Friend_list_size()
 	var list = make([]uint32, size)
-	C.tox_self_get_friend_list(this.tox, (*C.uint32_t)(&list[0]))
+	if size != 0 {
+		C.tox_self_get_friend_list(this.tox, (*C.uint32_t)(&list[0]))
+	}
 	return list
 }
 
@@ -799,10 +807,13 @@ func (this *Tox) Friend_name(fid uint32) (string ,error) {
 	}
 	var name = make([]byte, size)
 
-	r := C.tox_friend_get_name(this.tox,
-		C.uint32_t(fid),
-		(*C.uint8_t)(&name[0]),
-		&err)
+	var r C.bool
+	if size != 0 {
+		r = C.tox_friend_get_name(this.tox,
+			C.uint32_t(fid),
+			(*C.uint8_t)(&name[0]),
+			&err)
+	}
 
 	switch err {
 	case C.TOX_ERR_FRIEND_QUERY_OK:
@@ -851,10 +862,13 @@ func (this *Tox) Friend_status_message(fid uint32) (string, error) {
 	}
 	var msg = make([]byte, size)
 
-	r := C.tox_friend_get_status_message(this.tox,
-		C.uint32_t(fid),
-		(*C.uint8_t)(&msg[0]),
-		&err)
+	var r C.bool
+	if size != 0 {
+		r = C.tox_friend_get_status_message(this.tox,
+			C.uint32_t(fid),
+			(*C.uint8_t)(&msg[0]),
+			&err)
+	}
 
 	switch err {
 	case C.TOX_ERR_FRIEND_QUERY_OK:
@@ -1452,27 +1466,34 @@ func (this *Tox) Conference_title_size(gid uint32) (uint32, error) {
 
 func (this *Tox) Conference_title(gid uint32) (string, error) {
 	var err C.TOX_ERR_CONFERENCE_TITLE = C.TOX_ERR_CONFERENCE_TITLE_OK
-	var str[MAX_NAME_LENGTH] byte
+	var size, invalid = this.Conference_title_size(gid)
+	if invalid != nil {
+		return string(""), invalid
+	}
+	var title = make([]byte, size)
 
-	r := C.tox_conference_get_title(this.tox,
-	C.uint32_t(gid),
-	(*C.uint8_t)(&str[0]),
-	&err)
+	var r C.bool
+	if size != 0 {
+		r = C.tox_conference_get_title(this.tox,
+		C.uint32_t(gid),
+		(*C.uint8_t)(&title[0]),
+		&err)
+	}
 
 	switch err {
 	case C.TOX_ERR_CONFERENCE_TITLE_OK:
 		if !bool(r) {
-			return string(str[:]), errors.New("internal error.")
+			return string(title[:]), errors.New("internal error.")
 		}
-		return string(str[:]), nil
+		return string(title[:]), nil
 	case C.TOX_ERR_CONFERENCE_TITLE_CONFERENCE_NOT_FOUND:
-		return string(str[:]), errors.New("group not found, invalid group number.")
+		return string(title[:]), errors.New("group not found, invalid group number.")
 	case C.TOX_ERR_CONFERENCE_TITLE_INVALID_LENGTH:
-		return string(str[:]), errors.New("title is too long or empty, len.")
+		return string(title[:]), errors.New("title is too long or empty, len.")
 	case C.TOX_ERR_CONFERENCE_TITLE_FAIL_SEND:
-		return string(str[:]), errors.New("title packet failed to send.")
+		return string(title[:]), errors.New("title packet failed to send.")
 	default:
-		return string(str[:]), errors.New("internal error.")
+		return string(title[:]), errors.New("internal error.")
 	}
 }
 
@@ -1507,7 +1528,9 @@ func (this *Tox) Conference_chatlist_size() uint32 {
 func (this *Tox) Conference_chatlist() []uint32 {
 	var size = this.Conference_chatlist_size()
 	var vec = make([]uint32, size)
-	C.tox_conference_get_chatlist(this.tox, (*C.uint32_t)(&vec[0]))
+	if size != 0 {
+		C.tox_conference_get_chatlist(this.tox, (*C.uint32_t)(&vec[0]))
+	}
 	return vec
 }
 
