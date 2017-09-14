@@ -60,6 +60,7 @@ func self_connection_status(m *gtox.Tox, ct gtox.Connection_t) {
 		for _,v := range list {
 			m.Conference_del(v)
 		}
+		list = list[:0]
 	case gtox.CONNECTION_TCP:
 		fmt.Printf("Online with TCP\n")
 	case gtox.CONNECTION_UDP:
@@ -89,6 +90,7 @@ func friend_message(m *gtox.Tox, fid uint32, mtype gtox.Msg_t, message string) {
 			for _,v := range list {
 				m.Conference_del(v)
 			}
+			list = list[:0]
 		}
 	}
 }
