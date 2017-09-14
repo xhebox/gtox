@@ -744,16 +744,13 @@ func (this *Tox) Friend_public_key(fid uint32) (string, error) {
 	var err C.TOX_ERR_FRIEND_GET_PUBLIC_KEY = C.TOX_ERR_FRIEND_GET_PUBLIC_KEY_OK
 	var key = make([]byte, PUBLIC_KEY_SIZE)
 
-	r := C.tox_friend_get_public_key(this.tox,
+	C.tox_friend_get_public_key(this.tox,
 		C.uint32_t(fid),
 		(*C.uint8_t)(&key[0]),
 		&err)
 
 	switch err {
 	case C.TOX_ERR_FRIEND_GET_PUBLIC_KEY_OK:
-		if !bool(r) {
-			return hex.EncodeToString(key), errors.New("internal error.")
-		}
 		return hex.EncodeToString(key), nil
 	case C.TOX_ERR_FRIEND_GET_PUBLIC_KEY_FRIEND_NOT_FOUND:
 		return hex.EncodeToString(key), errors.New("no friend with the given number exists on the friend list.")
@@ -807,9 +804,8 @@ func (this *Tox) Friend_name(fid uint32) (string ,error) {
 	}
 	var name = make([]byte, size)
 
-	var r C.bool
 	if size != 0 {
-		r = C.tox_friend_get_name(this.tox,
+		C.tox_friend_get_name(this.tox,
 			C.uint32_t(fid),
 			(*C.uint8_t)(&name[0]),
 			&err)
@@ -817,9 +813,6 @@ func (this *Tox) Friend_name(fid uint32) (string ,error) {
 
 	switch err {
 	case C.TOX_ERR_FRIEND_QUERY_OK:
-		if !bool(r) {
-			return string(name), errors.New("internal error.")
-		}
 		return string(name), nil
 	case C.TOX_ERR_FRIEND_QUERY_NULL:
 		return string(name), errors.New("the pointer parameter for storing the query result was nil.")
@@ -862,9 +855,8 @@ func (this *Tox) Friend_status_message(fid uint32) (string, error) {
 	}
 	var msg = make([]byte, size)
 
-	var r C.bool
 	if size != 0 {
-		r = C.tox_friend_get_status_message(this.tox,
+		C.tox_friend_get_status_message(this.tox,
 			C.uint32_t(fid),
 			(*C.uint8_t)(&msg[0]),
 			&err)
@@ -872,9 +864,6 @@ func (this *Tox) Friend_status_message(fid uint32) (string, error) {
 
 	switch err {
 	case C.TOX_ERR_FRIEND_QUERY_OK:
-		if !bool(r) {
-			return string(msg), errors.New("internal error.")
-		}
 		return string(msg), nil
 	case C.TOX_ERR_FRIEND_QUERY_NULL:
 		return string(msg), errors.New("the pointer parameter for storing the query result was nil.")
@@ -1106,7 +1095,7 @@ func (this *Tox) File_file_id(fid uint32, did uint32) ([FILE_ID_LENGTH]byte, err
 	var err C.TOX_ERR_FILE_GET = C.TOX_ERR_FILE_GET_OK
 	var file_id [FILE_ID_LENGTH]byte
 
-	r := C.tox_file_get_file_id(this.tox,
+	C.tox_file_get_file_id(this.tox,
 		C.uint32_t(fid),
 		C.uint32_t(did),
 		(*C.uint8_t)(&file_id[0]),
@@ -1114,9 +1103,6 @@ func (this *Tox) File_file_id(fid uint32, did uint32) ([FILE_ID_LENGTH]byte, err
 
 	switch err {
 	case C.TOX_ERR_FILE_GET_OK:
-		if !bool(r) {
-			return file_id, errors.New("internal error.")
-		}
 		return file_id, nil
 	case C.TOX_ERR_FILE_GET_NULL:
 		return file_id, errors.New("one of the arguments to the function was NULL when it was not expected.")
@@ -1472,19 +1458,15 @@ func (this *Tox) Conference_title(gid uint32) (string, error) {
 	}
 	var title = make([]byte, size)
 
-	var r C.bool
 	if size != 0 {
-		r = C.tox_conference_get_title(this.tox,
-		C.uint32_t(gid),
-		(*C.uint8_t)(&title[0]),
-		&err)
+		C.tox_conference_get_title(this.tox,
+			C.uint32_t(gid),
+			(*C.uint8_t)(&title[0]),
+			&err)
 	}
 
 	switch err {
 	case C.TOX_ERR_CONFERENCE_TITLE_OK:
-		if !bool(r) {
-			return string(title[:]), errors.New("internal error.")
-		}
 		return string(title[:]), nil
 	case C.TOX_ERR_CONFERENCE_TITLE_CONFERENCE_NOT_FOUND:
 		return string(title[:]), errors.New("group not found, invalid group number.")
