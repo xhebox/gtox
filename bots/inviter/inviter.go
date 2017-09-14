@@ -48,8 +48,9 @@ func group_invite(m *gtox.Tox, fid uint32, t gtox.Conference_type, cookie []byte
 	if err != nil {
 		name,_ := m.Friend_name(fid)
 		fmt.Printf("Failed to accept invitation from { %d : %s }: %s\n", fid, name, err);
+	} else {
+		list = append(list, r)
 	}
-	list = append(list, r)
 }
 
 func self_connection_status(m *gtox.Tox, ct gtox.Connection_t) {
