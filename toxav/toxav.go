@@ -4,8 +4,8 @@ package gtoxav
 #include <tox/toxav.h>
 
 #define CBB(x) \
-static void set_##x(ToxAV* av, void* ud) { \
-	toxav_callback_##x(av, (toxav_##x##_cb*)&cb_##x, ud); \
+static void callback_##x(ToxAV* av) { \
+	toxav_callback_##x(av, (toxav_##x##_cb*)&cb_##x, NULL); \
 }
 
 // wrapper cb functions
@@ -27,7 +27,9 @@ import (
 	"unsafe"
 	"reflect"
 	"time"
-	"github.com/xhebox/gtox/tox"
+	"sync"
+	"context"
+	. "github.com/xhebox/gtox/tox"
 )
 
 // ======== type and enum ==========
@@ -43,7 +45,7 @@ const (
 )
 
 // call control
-type Call_control_t C.TOXAV_CALL_CONTROL
+type Call_control = C.TOXAV_CALL_CONTROL
 const (
 	CALL_CONTROL_RESUME = C.TOXAV_CALL_CONTROL_RESUME
 	CALL_CONTROL_PAUSE = C.TOXAV_CALL_CONTROL_PAUSE
@@ -54,54 +56,163 @@ const (
 	CALL_CONTROL_SHOW_VIDEO = C.TOXAV_CALL_CONTROL_SHOW_VIDEO
 )
 
-type Call func(m *AV, fid uint32, audio bool, video bool)
-type Call_state func(m *AV, fid uint32, state uint32)
-type Bit_rate_status func(m *AV, fid uint32, audio uint32, video uint32)
-type Audio_receive_frame func(m *AV, fid uint32, pcm []int16, sample_count uint32, channels uint8, sampling_rate uint32)
-type Video_receive_frame func(m *AV, fid uint32, width uint16, height uint16, y []byte, u []byte, v []byte, ystride int32, ustride int32, vstride int32)
+type Callback_call = func(m *AV, fid uint32, audio bool, video bool)
+type Callback_call_state = func(m *AV, fid uint32, state uint32)
+type Callback_bit_rate_status = func(m *AV, fid uint32, audio uint32, video uint32)
+type Callback_audio_receive_frame = func(m *AV, fid uint32, pcm []int16, sample_count uint32, channels uint8, sampling_rate uint32)
+type Callback_video_receive_frame = func(m *AV, fid uint32, width uint16, height uint16, y []byte, u []byte, v []byte, ystride int32, ustride int32, vstride int32)
 
 // main struct
 type AV struct {
 	// private
 	av *C.ToxAV
+	mtx sync.Mutex
 
 	// private callback wrapper
-	call Call
-	call_state Call_state
-	bit_rate_status Bit_rate_status
-	audio_receive_frame Audio_receive_frame
-	video_receive_frame Video_receive_frame
+	callback_call Callback_call
+	callback_call_state Callback_call_state
+	callback_bit_rate_status Callback_bit_rate_status
+	callback_audio_receive_frame Callback_audio_receive_frame
+	callback_video_receive_frame Callback_video_receive_frame
 }
+
+var (
+	avMap sync.Map
+	loopMap sync.Map
+
+	ErrAVNewMultiple = errors.New("attempted to create a second session for the same Tox instance.")
+	ErrAVSync = errors.New("synchronization error occurred.")
+	ErrAVInvalidBitRate = errors.New("audio or video bit rate is invalid.")
+	ErrAVFriendNotInCall = errors.New("this client is currently not in a call with the friend.")
+
+	ErrAVCallFriendAlreadyInCall = errors.New("attempted to call a friend while already in an audio or video call with them.")
+
+  ErrAVAnswerCodecInitialization = errors.New("failed to initialize codecs for call session.")
+	ErrAVAnswerFriendNotCalling = errors.New("the friend was valid, but they are not currently trying to initiate a call.")
+
+	ErrAVCallControlInvalidTransition = errors.New("happens if user tried to pause an already paused call or if trying to resume a call that is not paused.")
+
+	ErrAVBitRateSetInvalidAudioBitRate = errors.New("audio bit rate is invalid.")
+	ErrAVBitRateSetInvalidVideoBitRate = errors.New("video bit rate is invalid.")
+
+	ErrAVSendFrameNull = errors.New("in case of video, one of Y, U, or V was NULL.")
+	ErrAVSendFramePayloadTypeDisabled = errors.New("either friend turned off audio or video receiving or we turned off sending for the said payload.")
+	ErrAVSendFrameRtpFailed = errors.New("failed to push frame through rtp interface.")
+)
 // ================================
 
+// ========== utils ================
+func uint8_bytes(arr *C.uint8_t, length C.size_t) []byte {
+	hdr := reflect.SliceHeader{Data: uintptr(unsafe.Pointer(arr)), Len: int(length), Cap: int(length)}
+	return *(*[]byte)(unsafe.Pointer(&hdr))
+}
+
+func uint8_str(arr *C.uint8_t, length C.size_t) string {
+	hdr := reflect.StringHeader{Data: uintptr(unsafe.Pointer(arr)), Len: int(length)}
+	return *(*string)(unsafe.Pointer(&hdr))
+}
+
+func str_bytes(s string) []byte {
+	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	hdr := reflect.SliceHeader{Data: sh.Data, Len: sh.Len, Cap: sh.Len}
+	return *(*[]byte)(unsafe.Pointer(&hdr))
+}
+
+func bytes_str(s []byte) string {
+	sh := (*reflect.SliceHeader)(unsafe.Pointer(&s))
+	hdr := reflect.StringHeader{Data: sh.Data, Len: sh.Len}
+	return *(*string)(unsafe.Pointer(&hdr))
+}
+// =================================
+
 // ========== callback wrapper =====
+func (m *AV) Set_callback(name string, f interface{}) {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	switch name {
+	case "callback_call":
+		if cb,ok := f.(Callback_call); ok {
+			m.callback_call = cb
+			C.callback_call(m.av)
+		} else {
+			m.callback_call = nil
+			C.callback_call(nil)
+		}
+	case "callback_call_state":
+		if cb,ok := f.(Callback_call_state); ok {
+			m.callback_call_state = cb
+			C.callback_call_state(m.av)
+		} else {
+			m.callback_call_state = nil
+			C.callback_call_state(nil)
+		}
+	case "callback_bit_rate_status":
+		if cb,ok := f.(Callback_bit_rate_status); ok {
+			m.callback_bit_rate_status = cb
+			C.callback_bit_rate_status(m.av)
+		} else {
+			m.callback_bit_rate_status = nil
+			C.callback_bit_rate_status(nil)
+		}
+	case "callback_audio_receive_frame":
+		if cb,ok := f.(Callback_audio_receive_frame); ok {
+			m.callback_audio_receive_frame = cb
+			C.callback_audio_receive_frame(m.av)
+		} else {
+			m.callback_audio_receive_frame = nil
+			C.callback_audio_receive_frame(nil)
+		}
+	case "callback_video_receive_frame":
+		if cb,ok := f.(Callback_video_receive_frame); ok {
+			m.callback_video_receive_frame = cb
+			C.callback_video_receive_frame(m.av)
+		} else {
+			m.callback_video_receive_frame = nil
+			C.callback_video_receive_frame(nil)
+		}
+	}
+}
+
 // call setup
 //export cb_call
-func cb_call(m *C.ToxAV, fid C.uint32_t, audio C.bool, video C.bool, av unsafe.Pointer) {
-	(*AV)(av).call((*AV)(av), uint32(fid), bool(audio), bool(video))
+func cb_call(m *C.ToxAV, fid C.uint32_t, audio C.bool, video C.bool, null unsafe.Pointer) {
+	n,_ := avMap.Load(m)
+	v,e := n.(*AV)
+	if e {
+		v.callback_call(v, uint32(fid), bool(audio), bool(video))
+	}
 }
 
 // call state graph
 //export cb_call_state
-func cb_call_state(m *C.ToxAV, fid C.uint32_t, state C.uint32_t, av unsafe.Pointer) {
-	(*AV)(av).call_state((*AV)(av), uint32(fid), uint32(state))
+func cb_call_state(m *C.ToxAV, fid C.uint32_t, state C.uint32_t, null unsafe.Pointer) {
+	n,_ := avMap.Load(m)
+	v,e := n.(*AV)
+	if e {
+		v.callback_call_state(v, uint32(fid), uint32(state))
+	}
 }
 
 // controlling bit rates
 //export cb_bit_rate_status
-func cb_bit_rate_status(m *C.ToxAV, fid C.uint32_t, audio C.uint32_t, video C.uint32_t, av unsafe.Pointer) {
-	(*AV)(av).bit_rate_status((*AV)(av), uint32(fid), uint32(audio), uint32(video))
+func cb_bit_rate_status(m *C.ToxAV, fid C.uint32_t, audio C.uint32_t, video C.uint32_t, null unsafe.Pointer) {
+	n,_ := avMap.Load(m)
+	v,e := n.(*AV)
+	if e {
+		v.callback_bit_rate_status(v, uint32(fid), uint32(audio), uint32(video))
+	}
 }
 
 // receiving
 //export cb_audio_receive_frame
-func cb_audio_receive_frame(m *C.ToxAV, fid C.uint32_t, pcm *C.int16_t, sample_count C.size_t, channels C.uint8_t, sampling_rate C.uint32_t, av unsafe.Pointer) {
-	var _pcm []int16
-	pcm_h := (*reflect.SliceHeader)((unsafe.Pointer(&_pcm)))
-	pcm_h.Cap = int(uint32(sample_count)*uint32(channels))
-	pcm_h.Len = int(uint32(sample_count)*uint32(channels))
-	pcm_h.Data = uintptr(unsafe.Pointer(pcm))
-	(*AV)(av).audio_receive_frame((*AV)(av), uint32(fid), _pcm, uint32(sample_count), uint8(channels), uint32(sampling_rate))
+func cb_audio_receive_frame(m *C.ToxAV, fid C.uint32_t, pcm *C.int16_t, sample_count C.size_t, channels C.uint8_t, sampling_rate C.uint32_t, null unsafe.Pointer) {
+	hdr := reflect.SliceHeader{Data: uintptr(unsafe.Pointer(pcm)), Len: int(uint32(sample_count)*uint32(channels)), Cap: int(uint32(sample_count)*uint32(channels))}
+
+	n,_ := avMap.Load(m)
+	v,e := n.(*AV)
+	if e {
+		v.callback_audio_receive_frame(v, uint32(fid), *(*[]int16)(unsafe.Pointer(&hdr)), uint32(sample_count), uint8(channels), uint32(sampling_rate))
+	}
 }
 
 func max(a C.uint16_t, b C.int32_t) uint32 {
@@ -113,57 +224,109 @@ func max(a C.uint16_t, b C.int32_t) uint32 {
 }
 
 //export cb_video_receive_frame
-func cb_video_receive_frame(m *C.ToxAV, fid C.uint32_t, width C.uint16_t, height C.uint16_t, y *C.uint8_t, u *C.uint8_t, v *C.uint8_t, ys C.int32_t, us C.int32_t, vs C.int32_t, av unsafe.Pointer) {
-	var _y = max(width, ys)
-	var _u = max(width/2, us)
-	var _v = max(width/2, vs)
-	(*AV)(av).video_receive_frame((*AV)(av), uint32(fid), uint16(width), uint16(height), C.GoBytes(unsafe.Pointer(y), C.int(_y)), C.GoBytes(unsafe.Pointer(u), C.int(_u)), C.GoBytes(unsafe.Pointer(v), C.int(_v)), int32(ys), int32(us), int32(vs))
+func cb_video_receive_frame(m *C.ToxAV, fid C.uint32_t, width C.uint16_t, height C.uint16_t, y *C.uint8_t, u *C.uint8_t, v *C.uint8_t, ys C.int32_t, us C.int32_t, vs C.int32_t, null unsafe.Pointer) {
+	_y := C.size_t(max(width, ys))
+	_u := C.size_t(max(width/2, us))
+	_v := C.size_t(max(width/2, vs))
+	n,_ := avMap.Load(m)
+	g,e := n.(*AV)
+	if e {
+		g.callback_video_receive_frame(g, uint32(fid), uint16(width), uint16(height), uint8_bytes(y, _y), uint8_bytes(u, _u), uint8_bytes(v, _v), int32(ys), int32(us), int32(vs))
+	}
 }
 // ================================
 
 // =========== methods ============
-// creation and destruction
-func (this *AV) New(tox *Tox) error {
-	var err C.TOXAV_ERR_NEW = C.TOXAV_ERR_NEW_OK
+// gtoav specific
+func (m *AV) Lock() {
+	m.mtx.Lock()
+}
 
-	this.av = C.toxav_new((*C.Tox)(tox.CTox()), &err)
+func (m *AV) Unlock() {
+	m.mtx.Unlock()
+}
+
+// creation and destruction
+func NewAV(tox *Tox) (*AV, error) {
+	var err C.TOXAV_ERR_NEW = C.TOXAV_ERR_NEW_OK
+	r := C.toxav_new((*C.struct_Tox)(tox.Ctox()), &err)
 
 	switch err {
 	case C.TOXAV_ERR_NEW_OK:
-		return nil
+		m := &AV{av: r}
+		avMap.Store(r, m)
+		return m, nil
 	case C.TOXAV_ERR_NEW_NULL:
-		return errors.New("one of the arguments to the function was NULL when it was not expected.")
+		return nil, ErrNull
 	case C.TOXAV_ERR_NEW_MALLOC:
-		return errors.New("memory allocation failure while trying to allocate structures required for the A/V session.")
+		return nil, ErrMalloc
 	case C.TOXAV_ERR_NEW_MULTIPLE:
-		return errors.New("attempted to create a second session for the same Tox instance.")
+		return nil, ErrAVNewMultiple
 	default:
-		return errors.New("internal error.")
+		return nil, ErrInternal
 	}
 }
 
-func (this *AV) Del() {
-	C.toxav_kill(this.av)
+func (m *AV) Kill() {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	C.toxav_kill(m.av)
+	avMap.Delete(m.av)
 }
 
-func (this *AV) Tox() *Tox {
-	return (*Tox)(unsafe.Pointer(C.toxav_get_tox(this.av)))
+func (m *AV) Cav() unsafe.Pointer {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return unsafe.Pointer(m.av)
 }
 
 // event loop
-func (this *AV) Iteration_interval() time.Time {
-	return time.Unix(int64(C.toxav_iteration_interval(this.av)), 0)
+func (m *AV) Iteration_interval() time.Duration {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return time.Duration(C.toxav_iteration_interval(m.av))*time.Millisecond
 }
 
-func (this *AV) Iterate() {
-	C.toxav_iterate(this.av)
+func (m *AV) Iterate() {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	C.toxav_iterate(m.av)
+}
+
+func (m *AV) IterateLoop(cb func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		loopMap.Delete(m.av)
+		cancel()
+		cb()
+	}()
+	loopMap.Store(m.av, &cancel)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			m.Iterate()
+			time.Sleep(m.Iteration_interval())
+		}
+	}
+}
+
+func (m *AV) StopIterateLoop() {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	n,_ := loopMap.Load(m.av)
+	if v,ok := n.(*context.CancelFunc); ok {
+		(*v)()
+		loopMap.Delete(m.av)
+	}
 }
 
 // call setup
-func (this *AV) Call(fid uint32, audio_bit_rate uint32, video_bit_rate uint32) (bool, error) {
+func (m *AV) Call(fid uint32, audio_bit_rate uint32, video_bit_rate uint32) error {
 	var err C.TOXAV_ERR_CALL = C.TOXAV_ERR_CALL_OK
 
-	r := C.toxav_call(this.av,
+	C.toxav_call(m.av,
 		C.uint32_t(fid),
 		C.uint32_t(audio_bit_rate),
 		C.uint32_t(video_bit_rate),
@@ -171,33 +334,28 @@ func (this *AV) Call(fid uint32, audio_bit_rate uint32, video_bit_rate uint32) (
 
 	switch err {
 	case C.TOXAV_ERR_CALL_OK:
-		return bool(r), nil
+		return nil
 	case C.TOXAV_ERR_CALL_MALLOC:
-		return bool(r), errors.New("a resource allocation error occurred while trying to create the structures required for the call.")
+		return ErrMalloc
 	case C.TOXAV_ERR_CALL_SYNC:
-		return bool(r), errors.New("synchronization error occurred.")
+		return ErrAVSync
 	case C.TOXAV_ERR_CALL_FRIEND_NOT_FOUND:
-		return bool(r), errors.New("the friend number did not designate a valid friend.")
+		return ErrFriendNotFound
 	case C.TOXAV_ERR_CALL_FRIEND_NOT_CONNECTED:
-		return bool(r), errors.New("the friend was valid, but not currently connected.")
+		return ErrFriendNotConnected
 	case C.TOXAV_ERR_CALL_FRIEND_ALREADY_IN_CALL:
-		return bool(r), errors.New("attempted to call a friend while already in an audio or video call with them.")
+		return ErrAVCallFriendAlreadyInCall
 	case C.TOXAV_ERR_CALL_INVALID_BIT_RATE:
-		return bool(r), errors.New("audio or video bit rate is invalid.")
+		return ErrAVInvalidBitRate
 	default:
-		return bool(r), errors.New("internal error.")
+		return ErrInternal
 	}
 }
 
-func (this *AV) Callback_call(cb Call, ud unsafe.Pointer) {
-	this.call = cb
-	C.set_call(this.av, ud);
-}
-
-func (this *AV) Answer(fid uint32, audio_bit_rate uint32, video_bit_rate uint32) (bool, error) {
+func (m *AV) Answer(fid uint32, audio_bit_rate uint32, video_bit_rate uint32) error {
 	var err C.TOXAV_ERR_ANSWER = C.TOXAV_ERR_ANSWER_OK
 
-	r := C.toxav_answer(this.av,
+	C.toxav_answer(m.av,
 		C.uint32_t(fid),
 		C.uint32_t(audio_bit_rate),
 		C.uint32_t(video_bit_rate),
@@ -205,59 +363,53 @@ func (this *AV) Answer(fid uint32, audio_bit_rate uint32, video_bit_rate uint32)
 
 	switch err {
 	case C.TOXAV_ERR_ANSWER_OK:
-		return bool(r), nil
+		return nil
 	case C.TOXAV_ERR_ANSWER_SYNC:
-		return bool(r), errors.New("synchronization error occurred.")
+		return ErrAVSync
 	case C.TOXAV_ERR_ANSWER_CODEC_INITIALIZATION:
-		return bool(r), errors.New("failed to initialize codecs for call session.")
+		return ErrAVAnswerCodecInitialization
 	case C.TOXAV_ERR_ANSWER_FRIEND_NOT_FOUND:
-		return bool(r), errors.New("the friend number did not designate a valid friend.")
+		return ErrFriendNotFound
 	case C.TOXAV_ERR_ANSWER_FRIEND_NOT_CALLING:
-		return bool(r), errors.New("the friend was valid, but they are not currently trying to initiate a call.")
+		return errors.New("the friend was valid, but they are not currently trying to initiate a call.")
 	case C.TOXAV_ERR_ANSWER_INVALID_BIT_RATE:
-		return bool(r), errors.New("audio or video bit rate is invalid.")
+		return ErrAVInvalidBitRate
 	default:
-		return bool(r), errors.New("internal error.")
+		return ErrInternal
 	}
 }
 
-// call state graph
-func (this *AV) Callback_call_state(cb Call_state, ud unsafe.Pointer) {
-	this.call_state = cb
-	C.set_call_state(this.av, ud);
-}
-
 // call control
-func (this *AV) Call_control(fid uint32, control Call_control_t) (bool, error) {
+func (m *AV) Call_control(fid uint32, control Call_control) error {
 	var err C.TOXAV_ERR_CALL_CONTROL = C.TOXAV_ERR_CALL_CONTROL_OK
 
-	r := C.toxav_call_control(this.av,
+	C.toxav_call_control(m.av,
 		C.uint32_t(fid),
-		C.TOXAV_CALL_CONTROL(control),
+		control,
 		&err)
 
 	switch err {
 	case C.TOXAV_ERR_CALL_CONTROL_OK:
-		return bool(r), nil
+		return nil
 	case C.TOXAV_ERR_BIT_RATE_SET_SYNC:
-		return bool(r), errors.New("synchronization error occurred.")
+		return ErrAVSync
 	case C.TOXAV_ERR_CALL_CONTROL_FRIEND_NOT_FOUND:
-		return bool(r), errors.New("the friend number did not designate a valid friend.")
+		return ErrFriendNotFound
 	case C.TOXAV_ERR_CALL_CONTROL_FRIEND_NOT_IN_CALL:
-		return bool(r), errors.New("this client is currently not in a call with the friend.")
+		return ErrAVFriendNotInCall
 	case C.TOXAV_ERR_CALL_CONTROL_INVALID_TRANSITION:
-		return bool(r), errors.New("happens if user tried to pause an already paused call or if trying to resume a call that is not paused.")
+		return ErrAVCallControlInvalidTransition
 	default:
-		return bool(r), errors.New("internal error.")
+		return ErrInternal
 	}
 }
 
 // controlling bit rates
-func (this *AV) Bit_rate_set(fid uint32, arate uint32, vrate uint32) (bool, error) {
+func (m *AV) Bit_rate_set(fid uint32, arate uint32, vrate uint32) error {
 	var err C.TOXAV_ERR_BIT_RATE_SET = C.TOXAV_ERR_BIT_RATE_SET_OK
 
 	// https://github.com/TokTok/c-toxcore/issues/572
-	r := C.toxav_bit_rate_set(this.av,
+	C.toxav_bit_rate_set(m.av,
 		C.uint32_t(fid),
 		C.int32_t(arate),
 		C.int32_t(vrate),
@@ -265,32 +417,27 @@ func (this *AV) Bit_rate_set(fid uint32, arate uint32, vrate uint32) (bool, erro
 
 	switch err {
 	case C.TOXAV_ERR_BIT_RATE_SET_OK:
-		return bool(r), nil
+		return nil
 	case C.TOXAV_ERR_BIT_RATE_SET_SYNC:
-		return bool(r), errors.New("synchronization error occurred.")
+		return ErrAVSync
 	case C.TOXAV_ERR_BIT_RATE_SET_INVALID_AUDIO_BIT_RATE:
-		return bool(r), errors.New("audio bit rate is invalid.")
+		return ErrAVBitRateSetInvalidAudioBitRate
 	case C.TOXAV_ERR_BIT_RATE_SET_INVALID_VIDEO_BIT_RATE:
-		return bool(r), errors.New("video bit rate is invalid.")
+		return ErrAVBitRateSetInvalidVideoBitRate
 	case C.TOXAV_ERR_BIT_RATE_SET_FRIEND_NOT_FOUND:
-		return bool(r), errors.New("the friend number did not designate a valid friend.")
+		return ErrFriendNotFound
 	case C.TOXAV_ERR_BIT_RATE_SET_FRIEND_NOT_IN_CALL:
-		return bool(r), errors.New("this client is currently not in a call with the friend.")
+		return ErrAVFriendNotInCall
 	default:
-		return bool(r), errors.New("internal error.")
+		return ErrInternal
 	}
 }
 
-func (this *AV) Bit_rate_status(cb Bit_rate_status, ud unsafe.Pointer) {
-	this.bit_rate_status = cb
-	C.set_bit_rate_status(this.av, ud)
-}
-
 // sending
-func (this *AV) Audio_send_frame(fid uint32, pcm []int16, sample_count uint32, channels uint8, sampling_rate uint32) (bool, error) {
+func (m *AV) Audio_send_frame(fid uint32, pcm []int16, sample_count uint32, channels uint8, sampling_rate uint32) error {
 	var err C.TOXAV_ERR_SEND_FRAME = C.TOXAV_ERR_SEND_FRAME_OK
 
-	r := C.toxav_audio_send_frame(this.av,
+	C.toxav_audio_send_frame(m.av,
 		C.uint32_t(fid),
 		(*C.int16_t)(&pcm[0]),
 		C.size_t(sample_count),
@@ -300,30 +447,30 @@ func (this *AV) Audio_send_frame(fid uint32, pcm []int16, sample_count uint32, c
 
 	switch err {
 	case C.TOXAV_ERR_SEND_FRAME_OK:
-		return bool(r), nil
+		return nil
 	case C.TOXAV_ERR_SEND_FRAME_NULL:
-		return bool(r), errors.New("in case of video, one of Y, U, or V was NULL.")
+		return ErrAVSendFrameNull
 	case C.TOXAV_ERR_SEND_FRAME_FRIEND_NOT_FOUND:
-		return bool(r), errors.New("the friend_number passed did not designate a valid friend.")
+		return ErrFriendNotFound
 	case C.TOXAV_ERR_SEND_FRAME_FRIEND_NOT_IN_CALL:
-		return bool(r), errors.New("this client is currently not in a call with the friend.")
+		return ErrAVFriendNotInCall
 	case C.TOXAV_ERR_SEND_FRAME_SYNC:
-		return bool(r), errors.New("synchronization error occurred.")
+		return ErrAVSync
 	case C.TOXAV_ERR_SEND_FRAME_INVALID:
-		return bool(r), errors.New("one of the frame parameters was invalid.")
+		return ErrNull
 	case C.TOXAV_ERR_SEND_FRAME_PAYLOAD_TYPE_DISABLED:
-		return bool(r), errors.New("either friend turned off audio or video receiving or we turned off sending for the said payload.")
+		return ErrAVSendFramePayloadTypeDisabled
 	case C.TOXAV_ERR_SEND_FRAME_RTP_FAILED:
-		return bool(r), errors.New("failed to push frame through rtp interface.")
+		return ErrAVSendFrameRtpFailed
 	default:
-		return bool(r), errors.New("internal error.")
+		return ErrInternal
 	}
 }
 
-func (this *AV) Video_send_frame(fid uint32, width uint16, height uint16, y []byte, u []byte, v []byte) (bool, error) {
+func (m *AV) Video_send_frame(fid uint32, width uint16, height uint16, y []byte, u []byte, v []byte) error {
 	var err C.TOXAV_ERR_SEND_FRAME = C.TOXAV_ERR_SEND_FRAME_OK
 
-	r := C.toxav_video_send_frame(this.av,
+	C.toxav_video_send_frame(m.av,
 		C.uint32_t(fid),
 		C.uint16_t(width),
 		C.uint16_t(height),
@@ -334,34 +481,23 @@ func (this *AV) Video_send_frame(fid uint32, width uint16, height uint16, y []by
 
 	switch err {
 	case C.TOXAV_ERR_SEND_FRAME_OK:
-		return bool(r), nil
+		return nil
 	case C.TOXAV_ERR_SEND_FRAME_NULL:
-		return bool(r), errors.New("in case of video, one of Y, U, or V was NULL.")
+		return ErrAVSendFrameNull
 	case C.TOXAV_ERR_SEND_FRAME_FRIEND_NOT_FOUND:
-		return bool(r), errors.New("the friend_number passed did not designate a valid friend.")
+		return ErrFriendNotFound
 	case C.TOXAV_ERR_SEND_FRAME_FRIEND_NOT_IN_CALL:
-		return bool(r), errors.New("this client is currently not in a call with the friend.")
+		return ErrAVFriendNotInCall
 	case C.TOXAV_ERR_SEND_FRAME_SYNC:
-		return bool(r), errors.New("synchronization error occurred.")
+		return ErrAVSync
 	case C.TOXAV_ERR_SEND_FRAME_INVALID:
-		return bool(r), errors.New("one of the frame parameters was invalid.")
+		return ErrNull
 	case C.TOXAV_ERR_SEND_FRAME_PAYLOAD_TYPE_DISABLED:
-		return bool(r), errors.New("either friend turned off audio or video receiving or we turned off sending for the said payload.")
+		return ErrAVSendFramePayloadTypeDisabled
 	case C.TOXAV_ERR_SEND_FRAME_RTP_FAILED:
-		return bool(r), errors.New("failed to push frame through rtp interface.")
+		return ErrAVSendFrameRtpFailed
 	default:
-		return bool(r), errors.New("internal error.")
+		return ErrInternal
 	}
-}
-
-// receiving
-func (this *AV) Callback_audio_receive_frame(cb Audio_receive_frame, ud unsafe.Pointer) {
-	this.audio_receive_frame = cb
-	C.set_audio_receive_frame(this.av, ud);
-}
-
-func (this *AV) Callback_video_receive_frame(cb Video_receive_frame, ud unsafe.Pointer) {
-	this.video_receive_frame = cb
-	C.set_video_receive_frame(this.av, ud);
 }
 // ================================
