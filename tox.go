@@ -1441,6 +1441,8 @@ func (this *Tox) Conference_title_size(gid uint32) (uint32, error) {
 	switch err {
 	case C.TOX_ERR_CONFERENCE_TITLE_OK:
 		return uint32(r), nil
+	case C.TOX_ERR_CONFERENCE_TITLE_INVALID_LENGTH:
+		return uint32(r), nil
 	case C.TOX_ERR_CONFERENCE_TITLE_CONFERENCE_NOT_FOUND:
 		return uint32(r), errors.New("group not found, invalid group number.")
 	case C.TOX_ERR_CONFERENCE_TITLE_FAIL_SEND:

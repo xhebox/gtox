@@ -11,6 +11,7 @@ import (
 
 var list []uint32
 var passwd string
+var start time.Time
 
 func friend_request(m *gtox.Tox, pubkey string, message string) {
 	m.Friend_add_norequest(pubkey)
@@ -24,17 +25,28 @@ func friend_request(m *gtox.Tox, pubkey string, message string) {
 	f.Close()
 
 	fid,_ := m.Friend_by_public_key(pubkey)
-	name,_ := m.Friend_name(fid)
+	name,err := m.Friend_name(fid)
+	if err != nil {
+		fmt.Printf("Failed to get friend name: %d - %s\n", fid, err)
+	}
 	fmt.Printf("Added friend { %d : %s }, message: [ %s ]\n", fid, name, message)
 }
 
 func friend_connect(m *gtox.Tox, fid uint32, status gtox.Connection_t) {
 	if status != gtox.CONNECTION_NONE {
 		for _, gid := range list {
-			name,_ := m.Friend_name(fid)
-			title,_ := m.Conference_title(gid)
+			name,err := m.Friend_name(fid)
+			if err != nil {
+				fmt.Printf("Failed to get friend name: %d - %s\n", fid, err)
+			}
+			title,err := m.Conference_title(gid)
+			if err != nil {
+				fmt.Printf("Failed to get group name: %d - %s\n", gid, err)
+				fmt.Printf("Invite { %d : %s } to { %d : %s }\n", fid, name, gid, err);
+			} else {
+				fmt.Printf("Invite { %d : %s } to { %d : %s }\n", fid, name, gid, title);
+			}
 
-			fmt.Printf("Invite { %d : %s } to { %d : %s }\n", fid, name, gid, title);
 			r, err := m.Conference_invite(fid, gid)
 			if r && err != nil {
 				fmt.Printf("Failed to invite { %d : %s }: %s\n", fid, name, err);
@@ -44,11 +56,15 @@ func friend_connect(m *gtox.Tox, fid uint32, status gtox.Connection_t) {
 }
 
 func group_invite(m *gtox.Tox, fid uint32, t gtox.Conference_type, cookie []byte) {
+	name,err := m.Friend_name(fid)
+	if err != nil {
+		fmt.Printf("Failed to get friend name: %d - %s\n", fid, err)
+	}
 	r, err := m.Conference_join(fid, cookie)
 	if err != nil {
-		name,_ := m.Friend_name(fid)
 		fmt.Printf("Failed to accept invitation from { %d : %s }: %s\n", fid, name, err);
 	} else {
+		fmt.Printf("Accepted invitation from { %d : %s }\n", fid, name);
 		list = append(list, r)
 	}
 }
@@ -68,21 +84,44 @@ func self_connection_status(m *gtox.Tox, ct gtox.Connection_t) {
 	}
 }
 
+func friend_name(m *gtox.Tox, fid uint32, name []byte) {
+	fmt.Printf("Got friend name: { %d : %s }\n", fid, string(name[:]))
+}
+
 func friend_message(m *gtox.Tox, fid uint32, mtype gtox.Msg_t, message string) {
 	if mtype == gtox.MSG_NORMAL {
 		if strings.Compare(message, "groups") == 0 {
 			var buffer bytes.Buffer
 			buffer.WriteString("Groups: {\n")
 			for _,v := range list {
-				title,_ := m.Conference_title(v)
-				buffer.WriteString(fmt.Sprintf("%d: %s\n", v, title));
+				title,err := m.Conference_title(v)
+				if err != nil {
+					fmt.Printf("Failed to get group name: %d - %s\n", v, err)
+					buffer.WriteString(fmt.Sprintf("%d: %s\n", v, err));
+				} else {
+					buffer.WriteString(fmt.Sprintf("%d: %s\n", v, title));
+				}
 			}
 			buffer.WriteString("}")
 			m.Friend_send_message(fid, gtox.MSG_NORMAL, buffer.String())
 		}
 		if strings.Compare(message, "help") == 0 {
 			var buffer bytes.Buffer
-			buffer.WriteString("Commands:\ngroups -- list all groups on the invitation list\nreset[passwd] -- reset the invitation list\n")
+			buffer.WriteString("Commands:\ngroups -- list all groups on the invitation list\nstatus -- print current status\nreset[passwd] -- reset the invitation list\n")
+			m.Friend_send_message(fid, gtox.MSG_NORMAL, buffer.String())
+		}
+		if strings.Compare(message, "status") == 0 {
+			t := time.Now()
+			var count uint32
+			total := m.Friend_list_size()
+			for _,v := range m.Friend_list() {
+				status,_ := m.Friend_connection_status(v)
+				if status != gtox.CONNECTION_NONE {
+					count++
+				}
+			}
+			var buffer bytes.Buffer
+			buffer.WriteString(fmt.Sprintf("Uptime: %s\nFriends: [ %d / %d ]\n", t.Sub(start).String(), count, total))
 			m.Friend_send_message(fid, gtox.MSG_NORMAL, buffer.String())
 		}
 		if strings.Compare(message, fmt.Sprintf("reset%s", passwd)) == 0 {
@@ -123,6 +162,7 @@ func main() {
 	tox.Bootstrap(string("tox.deadteam.org"), 33445, string("C7D284129E83877D63591F14B3F658D77FF9BA9BA7293AEB2BDFBFE1A803AF47"))
 
 	var id = tox.Self_address()
+	start = time.Now()
 	fmt.Printf("Bot id: %s\nplease input a passwd:\n", id)
 	_, err := fmt.Scanf("%s", &passwd)
 	if err != nil {
@@ -135,6 +175,7 @@ func main() {
 	tox.Callback_conference_invite(group_invite)
 	tox.Callback_friend_connection_status(friend_connect)
 	tox.Callback_friend_message(friend_message)
+	tox.Callback_friend_name(friend_name)
 
 	for {
 		tox.Iterate()
