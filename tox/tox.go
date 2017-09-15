@@ -305,6 +305,11 @@ func cb_friend_lossless_packet(m *C.Tox, fid C.uint32_t, data *C.uint8_t, length
 // ================================
 
 // =========== methods ============
+// gtox specific
+func (this *Tox) CTox() *C.Tox {
+	return this.tox
+}
+
 // api version
 func (this *Tox) Version_major() uint32 {
 	return uint32(C.tox_version_major())

@@ -6,14 +6,14 @@ import (
 	"strings"
 	"bytes"
 	"time"
-	"github.com/xhebox/gtox"
+	. "github.com/xhebox/gtox/tox"
 )
 
 var list []uint32
 var passwd string
 var start time.Time
 
-func friend_request(m *gtox.Tox, pubkey string, message string) {
+func friend_request(m *Tox, pubkey string, message string) {
 	m.Friend_add_norequest(pubkey)
 	var data = m.Savedata()
 	var f, err = os.OpenFile("save.bin", os.O_RDWR|os.O_CREATE, 0755)
@@ -32,8 +32,8 @@ func friend_request(m *gtox.Tox, pubkey string, message string) {
 	fmt.Printf("Added friend { %d : %s }, message: [ %s ]\n", fid, name, message)
 }
 
-func friend_connect(m *gtox.Tox, fid uint32, status gtox.Connection_t) {
-	if status != gtox.CONNECTION_NONE {
+func friend_connect(m *Tox, fid uint32, status Connection_t) {
+	if status != CONNECTION_NONE {
 		for _, gid := range list {
 			name,err := m.Friend_name(fid)
 			if err != nil {
@@ -42,7 +42,7 @@ func friend_connect(m *gtox.Tox, fid uint32, status gtox.Connection_t) {
 			title,err := m.Conference_title(gid)
 			if err != nil {
 				fmt.Printf("Failed to get group name: %d - %s\n", gid, err)
-				fmt.Printf("Invite { %d : %s } to { %d : %s }\n", fid, name, gid, err);
+				fmt.Printf("Invite { %d : %s } to { %d : None }\n", fid, name, gid);
 			} else {
 				fmt.Printf("Invite { %d : %s } to { %d : %s }\n", fid, name, gid, title);
 			}
@@ -55,7 +55,7 @@ func friend_connect(m *gtox.Tox, fid uint32, status gtox.Connection_t) {
 	}
 }
 
-func group_invite(m *gtox.Tox, fid uint32, t gtox.Conference_type, cookie []byte) {
+func group_invite(m *Tox, fid uint32, t Conference_type, cookie []byte) {
 	name,err := m.Friend_name(fid)
 	if err != nil {
 		fmt.Printf("Failed to get friend name: %d - %s\n", fid, err)
@@ -69,27 +69,27 @@ func group_invite(m *gtox.Tox, fid uint32, t gtox.Conference_type, cookie []byte
 	}
 }
 
-func self_connection_status(m *gtox.Tox, ct gtox.Connection_t) {
+func self_connection_status(m *Tox, ct Connection_t) {
 	switch ct {
-	case gtox.CONNECTION_NONE:
+	case CONNECTION_NONE:
 		fmt.Printf("Offline, reset groups list\n")
 		for _,v := range list {
 			m.Conference_del(v)
 		}
 		list = list[:0]
-	case gtox.CONNECTION_TCP:
+	case CONNECTION_TCP:
 		fmt.Printf("Online with TCP\n")
-	case gtox.CONNECTION_UDP:
+	case CONNECTION_UDP:
 		fmt.Printf("Online with UDP\n")
 	}
 }
 
-func friend_name(m *gtox.Tox, fid uint32, name []byte) {
+func friend_name(m *Tox, fid uint32, name []byte) {
 	fmt.Printf("Got friend name: { %d : %s }\n", fid, string(name[:]))
 }
 
-func friend_message(m *gtox.Tox, fid uint32, mtype gtox.Msg_t, message string) {
-	if mtype == gtox.MSG_NORMAL {
+func friend_message(m *Tox, fid uint32, mtype Msg_t, message string) {
+	if mtype == MSG_NORMAL {
 		if strings.Compare(message, "groups") == 0 {
 			var buffer bytes.Buffer
 			buffer.WriteString("Groups: {\n")
@@ -97,18 +97,18 @@ func friend_message(m *gtox.Tox, fid uint32, mtype gtox.Msg_t, message string) {
 				title,err := m.Conference_title(v)
 				if err != nil {
 					fmt.Printf("Failed to get group name: %d - %s\n", v, err)
-					buffer.WriteString(fmt.Sprintf("%d: %s\n", v, err));
+					buffer.WriteString(fmt.Sprintf("%d: None\n", v));
 				} else {
 					buffer.WriteString(fmt.Sprintf("%d: %s\n", v, title));
 				}
 			}
 			buffer.WriteString("}")
-			m.Friend_send_message(fid, gtox.MSG_NORMAL, buffer.String())
+			m.Friend_send_message(fid, MSG_NORMAL, buffer.String())
 		}
 		if strings.Compare(message, "help") == 0 {
 			var buffer bytes.Buffer
 			buffer.WriteString("Commands:\ngroups -- list all groups on the invitation list\nstatus -- print current status\nreset[passwd] -- reset the invitation list\n")
-			m.Friend_send_message(fid, gtox.MSG_NORMAL, buffer.String())
+			m.Friend_send_message(fid, MSG_NORMAL, buffer.String())
 		}
 		if strings.Compare(message, "status") == 0 {
 			t := time.Now()
@@ -116,13 +116,13 @@ func friend_message(m *gtox.Tox, fid uint32, mtype gtox.Msg_t, message string) {
 			total := m.Friend_list_size()
 			for _,v := range m.Friend_list() {
 				status,_ := m.Friend_connection_status(v)
-				if status != gtox.CONNECTION_NONE {
+				if status != CONNECTION_NONE {
 					count++
 				}
 			}
 			var buffer bytes.Buffer
 			buffer.WriteString(fmt.Sprintf("Uptime: %s\nFriends: [ %d / %d ]\n", t.Sub(start).String(), count, total))
-			m.Friend_send_message(fid, gtox.MSG_NORMAL, buffer.String())
+			m.Friend_send_message(fid, MSG_NORMAL, buffer.String())
 		}
 		if strings.Compare(message, fmt.Sprintf("reset%s", passwd)) == 0 {
 			fmt.Printf("Received reset groups command, executing\n")
@@ -135,8 +135,8 @@ func friend_message(m *gtox.Tox, fid uint32, mtype gtox.Msg_t, message string) {
 }
 
 func main() {
-	var tox gtox.Tox
-	var opt gtox.Tox_options
+	var tox Tox
+	var opt Tox_options
 	opt.New()
 
 	var f, e = os.Open("save.bin")
@@ -147,7 +147,7 @@ func main() {
 			f.Read(data)
 			f.Close()
 			opt.Savedata_length = uint32(i.Size())
-			opt.Savedata_type = gtox.SAVEDATA_TYPE_TOX_SAVE
+			opt.Savedata_type = SAVEDATA_TYPE_TOX_SAVE
 			opt.Savedata_data = append(opt.Savedata_data, data...)
 		}
 	}

@@ -1,4 +1,4 @@
-package gtox
+package gtoxav
 
 /*
 #include <tox/toxav.h>
@@ -27,6 +27,7 @@ import (
 	"unsafe"
 	"reflect"
 	"time"
+	"github.com/xhebox/gtox/tox"
 )
 
 // ======== type and enum ==========
@@ -125,7 +126,7 @@ func cb_video_receive_frame(m *C.ToxAV, fid C.uint32_t, width C.uint16_t, height
 func (this *AV) New(tox *Tox) error {
 	var err C.TOXAV_ERR_NEW = C.TOXAV_ERR_NEW_OK
 
-	this.av = C.toxav_new(tox.tox, &err)
+	this.av = C.toxav_new((*C.Tox)(tox.CTox()), &err)
 
 	switch err {
 	case C.TOXAV_ERR_NEW_OK:

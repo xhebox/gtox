@@ -1,4 +1,4 @@
-package gtox
+package gtoxcrypt
 
 /*
 #include <tox/toxencryptsave.h>

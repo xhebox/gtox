@@ -4,10 +4,10 @@ import (
 	"os"
 	"fmt"
 	"time"
-	"github.com/xhebox/gtox"
+	. "github.com/xhebox/gtox/tox"
 )
 
-func friend_request(m *gtox.Tox, pubkey string, message string) {
+func friend_request(m *Tox, pubkey string, message string) {
 	m.Friend_add_norequest(pubkey)
 	var data = m.Savedata()
 	var f, _ = os.OpenFile("save.bin", os.O_RDWR|os.O_CREATE, 0755)
@@ -16,24 +16,24 @@ func friend_request(m *gtox.Tox, pubkey string, message string) {
 	f.Close()
 }
 
-func friend_message(m *gtox.Tox, fid uint32, mt gtox.Msg_t, message string) {
+func friend_message(m *Tox, fid uint32, mt Msg_t, message string) {
 	m.Friend_send_message(fid, mt, message)
 }
 
-func self_connection_status(m *gtox.Tox, ct gtox.Connection_t) {
+func self_connection_status(m *Tox, ct Connection_t) {
 	switch ct {
-	case gtox.CONNECTION_NONE:
+	case CONNECTION_NONE:
 		fmt.Printf("offline\n")
-	case gtox.CONNECTION_TCP:
+	case CONNECTION_TCP:
 		fmt.Printf("online with TCP\n")
-	case gtox.CONNECTION_UDP:
+	case CONNECTION_UDP:
 		fmt.Printf("online with UDP\n")
 	}
 }
 
 func main() {
-	var tox gtox.Tox
-	var opt gtox.Tox_options
+	var tox Tox
+	var opt Tox_options
 	opt.New()
 
 	var f, e = os.Open("save.bin")
@@ -44,7 +44,7 @@ func main() {
 			f.Read(data)
 			f.Close()
 			opt.Savedata_length = uint32(i.Size())
-			opt.Savedata_type = gtox.SAVEDATA_TYPE_TOX_SAVE
+			opt.Savedata_type = SAVEDATA_TYPE_TOX_SAVE
 			opt.Savedata_data = append(opt.Savedata_data, data...)
 		}
 	}
